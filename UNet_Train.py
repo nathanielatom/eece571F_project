@@ -2,6 +2,7 @@ import os
 import glob
 
 from tqdm import tqdm
+import pickle
 import random
 import numpy as np
 import pandas as pd
@@ -18,8 +19,6 @@ from tensorflow.keras.utils import to_categorical
 # from keras_preprocessing.image import ImageDataGenerator
 
 def crop_3D(img, new_size):
-    if new_size[0] is not None:
-        return img
     img_shape = img.shape
     x_mid = int(img_shape[0]/2)
     y_mid = int(img_shape[1]/2)
@@ -37,14 +36,13 @@ def crop_3D(img, new_size):
     return tmp_img
 
 scalar = MinMaxScaler()
-def generate_brats_batch(prefix, 
+def generate_brats_batch(file_pattern, 
                          contrasts, 
                          batch_size=32, 
                          tumour='*', 
                          patient_ids='*',
                          crop_size = (None,None,None), 
-                         augment_size=None,
-                         infinite=True):
+                         augment_size=None):
     """
     Generate arrays for each batch, for x (data) and y (labels), where the contrast is treated like a colour channel.
     
@@ -55,7 +53,6 @@ def generate_brats_batch(prefix,
     augment_size must be less than or equal to the batch_size, if None will not augment.
     
     """
-    file_pattern = '{prefix}/MICCAI_BraTS_2018_Data_Training/{tumour}/{patient_id}/{patient_id}_{contrast}.nii.gz'
     while True:
         n_classes = 4
 
@@ -108,8 +105,6 @@ def generate_brats_batch(prefix,
                 yield np.append(x_batch, x_aug), np.append(y_batch, y_aug)
             else:
                 yield x_batch, y_batch
-        if not infinite:
-            break
 
 if __name__ == '__main__':
     tumours = ['LGG','HGG']
@@ -158,17 +153,17 @@ if __name__ == '__main__':
     encoder_weights = 'imagenet'
     BACKBONE = 'resnet50'
     optim = tf.keras.optimizers.Adam(LR)
-    # class_weights = [0.25, 0.25, 0.25, 0.25]
+    class_weights = [0.25, 0.25, 0.25, 0.25]
 
     # limit memory growth
     # gpus = tf.config.experimental.list_physical_devices('GPU')
     # tf.config.experimental.set_memory_growth(gpus[0], True)
 
     # Define Loss Functions
-    dice_loss = sm.losses.DiceLoss()
+    dice_loss = sm.losses.DiceLoss(class_weights=class_weights)
     focal_loss = sm.losses.CategoricalFocalLoss()
     total_loss = dice_loss + (1*focal_loss)
-    metrics = [sm.metrics.IOUScore(threshold = 0.5), sm.metrics.FScore(threshold = 0.5)]
+    metrics = [sm.metrics.IOUScore(threshold = 0.5)]
 
     # Define the model being used. In this case, UNet
     model = sm.Unet(backbone_name= BACKBONE,
@@ -182,14 +177,23 @@ if __name__ == '__main__':
 
     steps_per_epoch = len(train_file)//batch_size
     val_steps_per_epoch = len(test_file)//batch_size
-
-
+    
+    
+    my_callbacks = [tf.keras.callbacks.EarlyStopping(patience = 5),
+                    tf.keras.callbacks.TensorBoard(log_dir = prefix + 'models/unet' + './logs'),
+                    tf.keras.callbacks.ModelCheckpoint(filepath = prefix + '/unet_model_20220321.h5', monitor = 'val_loss', save_best_only = True)
+                   ]
+                    
     with tf.device('/device:GPU:0'):
         history = model.fit(train_datagen,
                             steps_per_epoch = steps_per_epoch,
                             epochs = 30,
                             verbose = 1,
                             validation_data = test_datagen,
-                            validation_steps = val_steps_per_epoch)
-        
+                            validation_steps = val_steps_per_epoch,
+                            callbacks = my_callbacks)
     
+    with open(prefix+'models/unet/unet_model_20220321', 'wb') as file_pi:
+        pickle.dump(history.history, file_pi)
+    
+
