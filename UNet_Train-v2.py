@@ -1,3 +1,5 @@
+# this script uses a custom written unet script called custom_unet.py
+
 import os
 import glob
 
@@ -12,6 +14,7 @@ import matplotlib.pyplot as plt
 from sklearn.preprocessing import MinMaxScaler
 
 import tensorflow as tf
+from tensorflow import keras
 devices = tf.config.list_physical_devices('GPU')
 print(devices)
 from tensorflow.keras import backend as K
@@ -87,7 +90,11 @@ def generate_brats_batch(file_pattern,
 
                     # load raw image batches and normalize the pixels
                     tmp_img = nib.load(filename.replace(arbitrary_contrast, contrast)).get_fdata()
-                    tmp_img = scalar.fit_transform(tmp_img.reshape(-1, tmp_img.shape[-1])).reshape(tmp_img.shape)
+                    try:
+                        tmp_img = scalar.fit_transform(tmp_img.reshape(-1, tmp_img.shape[-1])).reshape(tmp_img.shape)
+                    except:
+                        print(filename)
+                        print(contrast)
                     x_batch[findex, ..., cindex] = crop_3D(tmp_img, crop_size)
 
                     # load mask batches and change to categorical
@@ -133,14 +140,16 @@ if __name__ == '__main__':
 
     train_file, test_file = file_list_shuffled[0:int(len(file_list_shuffled)*(1-test_ratio))], file_list_shuffled[int(len(file_list_shuffled)*(1-test_ratio)):]
     
-    if '.DS_Store' in train_file:
+    while '.DS_Store' in train_file:
         train_file.remove('.DS_Store')
+    while '.DS_Store' in test_file:
+        test_file.remove('.DS_Store')
 
     batch_size = 2
     train_datagen = generate_brats_batch(file_pattern, contrasts, batch_size = batch_size, patient_ids = train_file , crop_size= (128,128,128)) # first iteration
     test_datagen = generate_brats_batch(file_pattern, contrasts, batch_size = batch_size, patient_ids = test_file, crop_size= (128,128,128)) # first iteration
 
-
+    from custom_unet import *
     import segmentation_models_3D as sm 
     sm.set_framework('tf.keras')
 
@@ -166,19 +175,17 @@ if __name__ == '__main__':
     # tf.config.experimental.set_memory_growth(gpus[0], True)
 
     # Define Loss Functions
-    dice_loss = sm.losses.DiceLoss(class_weights=class_weights)
+    # dice_loss = sm.losses.DiceLoss(class_weights=class_weights)
+    dice_loss = sm.losses.DiceLoss()
     focal_loss = sm.losses.CategoricalFocalLoss()
     total_loss = dice_loss + (1*focal_loss)
     metrics = [sm.metrics.IOUScore(threshold = 0.5)]
 
     # Define the model being used. In this case, UNet
-    model = sm.Unet(backbone_name= BACKBONE,
-                    classes = n_classes,
-                    input_shape = input_shape,
-                    encoder_weights = encoder_weights,
-                    activation = activation,
-                    decoder_block_type = 'transpose',
-                    dropout = 0.1)
+    model = unet_model((x_size,y_size,z_size,contrast_channels), 
+                        n_classes, 
+                        dropout = 0.05, 
+                        max_pooling = True)
 
     model.compile(optimizer = optim, loss = total_loss, metrics = metrics)
 
@@ -187,8 +194,8 @@ if __name__ == '__main__':
     
     
     my_callbacks = [tf.keras.callbacks.EarlyStopping(patience = 5),
-                    tf.keras.callbacks.TensorBoard(log_dir = prefix + 'models/unet' + './logs'),
-                    tf.keras.callbacks.ModelCheckpoint(filepath = prefix + '/unet_model_20220321.h5', monitor = 'val_acc', save_best_only = True)
+                    tf.keras.callbacks.TensorBoard(log_dir = prefix + '/models/unet' + './logs'),
+                    tf.keras.callbacks.ModelCheckpoint(filepath = prefix + '/unet_model_20220321.h5', monitor = 'val_loss', save_best_only = True)
                    ]
                     
     with tf.device('/device:GPU:0'):
@@ -199,5 +206,3 @@ if __name__ == '__main__':
                             validation_data = test_datagen,
                             validation_steps = val_steps_per_epoch,
                             callbacks = my_callbacks)
-    
-
