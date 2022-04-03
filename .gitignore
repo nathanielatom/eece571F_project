@@ -1,5 +1,7 @@
 # Custom
 runs/
+.DS_Store
+Transformer_3D_Segmentation.py
 
 # Byte-compiled / optimized / DLL files
 __pycache__/
