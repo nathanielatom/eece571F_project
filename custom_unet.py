@@ -21,7 +21,7 @@ def conv_block(input, num_filters):
     x = BatchNormalization()(x)
     return x 
 
-def Encoder_Block(input, num_filters, dropout = 0.3, max_pooling = True):
+def Encoder_Block(input, num_filters, dropout = 0.1, max_pooling = True):
     x = conv_block(input, num_filters)
 
     if dropout > 0:     
@@ -36,7 +36,7 @@ def Encoder_Block(input, num_filters, dropout = 0.3, max_pooling = True):
 
 # decoder block
 def Decoder_Block(prev_layer, skip_layer_input, num_filters = 32):
-    up = Conv3DTranspose(num_filters, (2,2,2), strides=2,padding = "same")(prev_layer)
+    up = Conv3DTranspose(num_filters, (3,3,3), strides=2 ,padding = "same")(prev_layer)
     merge = concatenate([up, skip_layer_input])
 
     x = conv_block(merge, num_filters)
@@ -44,7 +44,7 @@ def Decoder_Block(prev_layer, skip_layer_input, num_filters = 32):
     return x
 
 # Stack the layers and build the u-net model
-def unet_model(input_shape, n_classes, dropout = 0.1, max_pooling = True):
+def unet_model(input_shape, n_classes, max_pooling = True):
     inputs = Input(input_shape)
 
     s1, p1 = Encoder_Block(inputs, 32)
@@ -70,8 +70,3 @@ def unet_model(input_shape, n_classes, dropout = 0.1, max_pooling = True):
     model = Model(inputs, outputs, name = "u-net")
 
     return model
-
-#Test if everything is working ok. 
-model = unet_model((128,128,128, 3), 4)
-print(model.input_shape)
-print(model.output_shape)

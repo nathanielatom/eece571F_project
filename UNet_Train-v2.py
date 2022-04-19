@@ -1,5 +1,4 @@
 # this script uses a custom written unet script called custom_unet.py
-
 import os
 import glob
 
@@ -12,6 +11,8 @@ import nibabel as nib
 import scipy.ndimage as sci
 import matplotlib.pyplot as plt
 from sklearn.preprocessing import MinMaxScaler
+scalar = MinMaxScaler()
+from skimage.transform import resize
 
 import tensorflow as tf
 from tensorflow import keras
@@ -38,15 +39,14 @@ def crop_3D(img, new_size):
     tmp_img = img[x_start:x_start+new_size[0],y_start:y_start+new_size[1],z_start:z_start+new_size[2]]
     return tmp_img
 
-scalar = MinMaxScaler()
-def generate_brats_batch(file_pattern, 
+def generate_brats_batch(prefix, 
                          contrasts, 
                          batch_size=32, 
                          tumour='*', 
                          patient_ids='*',
-                         crop_size = (None,None,None), 
+                         resample_size=(None, None, None),
                          augment_size=None,
-                         infinite = True):
+                         infinite=True):
     """
     Generate arrays for each batch, for x (data) and y (labels), where the contrast is treated like a colour channel.
     
@@ -57,6 +57,7 @@ def generate_brats_batch(file_pattern,
     augment_size must be less than or equal to the batch_size, if None will not augment.
     
     """
+    file_pattern = '{prefix}/MICCAI_BraTS_2018_Data_Training/{tumour}/{patient_id}/{patient_id}_{contrast}.nii.gz'
     while True:
         n_classes = 4
 
@@ -73,35 +74,31 @@ def generate_brats_batch(file_pattern,
 
         # get the shape of one 3D volume and initialize the batch lists
         arbitrary_contrast = contrasts[0]
-        if crop_size == (None,None,None):
-            shape = nib.load(filenames_by_contrast[arbitrary_contrast][0]).get_fdata().shape
-        else:
-            shape = crop_size
+        shape = nib.load(filenames_by_contrast[arbitrary_contrast][0]).get_fdata().shape if resample_size == (None, None, None) else resample_size
 
         # initialize empty array of batches
         x_batch = np.empty((batch_size, ) + shape + (len(contrasts), )) #, dtype=np.int32)
         y_batch = np.empty((batch_size, ) + shape + (n_classes,)) #, dtype=np.int32)
         num_images = len(filenames_by_contrast[arbitrary_contrast])
         np.random.shuffle(filenames_by_contrast[arbitrary_contrast])
-        for bindex in tqdm(range(0, num_images, batch_size), total=num_images):
+        for bindex in range(0, num_images, batch_size):
             filenames = filenames_by_contrast[arbitrary_contrast][bindex:bindex + batch_size]
             for findex, filename in enumerate(filenames):
                 for cindex, contrast in enumerate(contrasts):
 
                     # load raw image batches and normalize the pixels
                     tmp_img = nib.load(filename.replace(arbitrary_contrast, contrast)).get_fdata()
-                    try:
-                        tmp_img = scalar.fit_transform(tmp_img.reshape(-1, tmp_img.shape[-1])).reshape(tmp_img.shape)
-                    except:
-                        print(filename)
-                        print(contrast)
-                    x_batch[findex, ..., cindex] = crop_3D(tmp_img, crop_size)
+                    if resample_size != (None, None, None):
+                        tmp_img = resize(tmp_img, resample_size, mode='edge')
+                    tmp_img = scalar.fit_transform(tmp_img.reshape(-1, tmp_img.shape[-1])).reshape(tmp_img.shape)
+                    x_batch[findex, ..., cindex] = tmp_img
 
                     # load mask batches and change to categorical
                     tmp_mask = nib.load(filename.replace(arbitrary_contrast, 'seg')).get_fdata()
                     tmp_mask[tmp_mask==4] = 3
-                    tmp_mask = crop_3D(tmp_mask, crop_size)
-                    tmp_mask = to_categorical(tmp_mask, num_classes = 4)
+                    tmp_mask = to_categorical(tmp_mask, num_classes=4)
+                    if resample_size != (None, None, None):
+                        tmp_mask = resize(tmp_mask, resample_size, mode='edge')
                     y_batch[findex] = tmp_mask
 
             if bindex + batch_size > num_images:
@@ -124,7 +121,7 @@ if __name__ == '__main__':
     prefix = '/home/atom/Documents/datasets/brats' # Adam's Station
     file_pattern = '{prefix}/MICCAI_BraTS_2018_Data_Training/{tumour}/{patient_id}/{patient_id}_{contrast}.nii.gz'
     # patient_id = 'Brats18_TCIA09_620_1'
-    contrasts = ['t1ce', 'flair', 't2']
+    contrasts = ['t1','t1ce', 'flair', 't2']
     tumours = ['LGG', 'HGG']
 
     data_list_LGG = os.listdir(os.path.join(prefix+brats_dir,tumours[0]))
@@ -144,29 +141,36 @@ if __name__ == '__main__':
         train_file.remove('.DS_Store')
     while '.DS_Store' in test_file:
         test_file.remove('.DS_Store')
+        
+        
+    # data parameters
+    x_size = 80
+    y_size = 80
+    z_size = 80
+    contrast_channels = 4
+    input_shape = (x_size, y_size, z_size, contrast_channels)
+    n_classes = 4
 
     batch_size = 2
-    train_datagen = generate_brats_batch(file_pattern, contrasts, batch_size = batch_size, patient_ids = train_file , crop_size= (128,128,128)) # first iteration
-    test_datagen = generate_brats_batch(file_pattern, contrasts, batch_size = batch_size, patient_ids = test_file, crop_size= (128,128,128)) # first iteration
+    train_datagen = generate_brats_batch(file_pattern, 
+                                         contrasts, 
+                                         batch_size = batch_size, 
+                                         patient_ids = train_file, 
+                                         resample_size = (x_size, y_size, z_size)) # first iteration
+    test_datagen = generate_brats_batch(file_pattern, 
+                                        contrasts, 
+                                        batch_size = batch_size, 
+                                        patient_ids = test_file, 
+                                        resample_size = (x_size, y_size, z_size)) # first iteration
 
     from custom_unet import *
     import segmentation_models_3D as sm 
     sm.set_framework('tf.keras')
 
-    # data parameters
-    x_size = 128
-    y_size = 128
-    z_size = 128
-    contrast_channels = 3
-    input_shape = (x_size, y_size, z_size, contrast_channels)
-    n_classes = 4
-
     # define Hyper Parameters
-    LR = 0.0001
+    LR = 0.0005
     activation = 'softmax'
 
-    encoder_weights = 'imagenet'
-    BACKBONE = 'vgg16'
     optim = tf.keras.optimizers.Adam(LR)
     class_weights = [0.25, 0.25, 0.25, 0.25]
 
@@ -176,15 +180,14 @@ if __name__ == '__main__':
 
     # Define Loss Functions
     # dice_loss = sm.losses.DiceLoss(class_weights=class_weights)
-    dice_loss = sm.losses.DiceLoss()
+    # dice_loss = sm.losses.DiceLoss()
     focal_loss = sm.losses.CategoricalFocalLoss()
-    total_loss = dice_loss + (1*focal_loss)
+    total_loss = 1*focal_loss
     metrics = [sm.metrics.IOUScore(threshold = 0.5)]
 
     # Define the model being used. In this case, UNet
     model = unet_model((x_size,y_size,z_size,contrast_channels), 
                         n_classes, 
-                        dropout = 0.05, 
                         max_pooling = True)
 
     model.compile(optimizer = optim, loss = total_loss, metrics = metrics)
@@ -194,8 +197,8 @@ if __name__ == '__main__':
     
     
     my_callbacks = [tf.keras.callbacks.EarlyStopping(patience = 5),
-                    tf.keras.callbacks.TensorBoard(log_dir = prefix + '/models/unet' + './logs'),
-                    tf.keras.callbacks.ModelCheckpoint(filepath = prefix + '/unet_model_20220321.h5', monitor = 'val_loss', save_best_only = True)
+                    tf.keras.callbacks.TensorBoard(log_dir = prefix + '/models/unet/' + './logs'),
+                    tf.keras.callbacks.ModelCheckpoint(filepath = prefix + '/unet_model_20220419.h5', monitor = 'val_loss', save_best_only = True)
                    ]
                     
     with tf.device('/device:GPU:0'):
