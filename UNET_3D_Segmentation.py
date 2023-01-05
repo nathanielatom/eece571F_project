@@ -1,12 +1,6 @@
 #!/usr/bin/env python
 # coding: utf-8
 
-# In[ ]:
-
-
-import sys
-sys.path.append('/home/atom/Dropbox/Skule/EECE571F/Project/research-contributions/UNETR/BTCV/networks')
-
 
 # In[ ]:
 
@@ -27,8 +21,6 @@ from torch.utils.tensorboard import SummaryWriter
 use_cuda = torch.cuda.is_available()
 device = torch.device("cuda:0" if use_cuda else "cpu")
 torch.backends.cudnn.benchmark = True
-
-from unetr import UNETR
 
 
 # In[ ]:
@@ -202,29 +194,9 @@ brats_y = 80 # 240
 brats_z = 80 # 155
 resampled_shape = (brats_x, brats_y, brats_z)
 
-patch_size = 16
-feature_size = 20
-embedding_size = 768 # 1536
-msa_heads = 6 # 12
-mlp_size = 1024 # 2048
-
 dropout = 0.10
 max_epochs = 50
 learning_rate = 0.0005
-
-
-# In[ ]:
-
-
-class OURUNETR(UNETR):
-    
-    @property
-    def patch_size(self):
-        return (patch_size, patch_size, patch_size)
-    
-    @patch_size.setter
-    def patch_size(self, value):
-        pass
 
 
 # In[ ]:
@@ -236,20 +208,16 @@ device
 # In[ ]:
 
 
-model = OURUNETR(
-    in_channels=brats_contrasts,
-    out_channels=brats_classes,
-    img_size=(brats_x, brats_y, brats_z),
-    feature_size=feature_size,
-    hidden_size=embedding_size,
-    mlp_dim=mlp_size,
-    num_heads=msa_heads,
-    pos_embed='perceptron',
-    norm_name='instance',
-    conv_block=True,
-    res_block=True,
-    dropout_rate=dropout)
+from monai.networks.nets import BasicUNet
+
+model = BasicUNet(
+            spatial_dims = 3,
+            in_channels = brats_contrasts,
+            out_channels = brats_classes,
+            dropout = 0.10
+)
 model = model.to(device)
+
 
 
 
@@ -375,7 +343,7 @@ def validate():
 
 
 timestamp = datetime.datetime.now().strftime('%Y%m%d_%H%M%S')
-writer = SummaryWriter('runs/unetr/trainer_{}'.format(timestamp))
+writer = SummaryWriter('runs/unet/trainer_{}'.format(timestamp))
 best_val_loss = np.inf
 
 for epoch in range(max_epochs):
